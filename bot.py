@@ -260,8 +260,16 @@ async def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     logger.info("Bot polling started ✅")
-    await app.run_polling(drop_pending_updates=True)
+
+    # Use initialize/start/stop manually to avoid event loop conflict with Telethon
+    async with app:
+        await app.start()
+        await app.updater.start_polling(drop_pending_updates=True)
+        logger.info("Bot is running! Press Ctrl+C to stop.")
+        await tg_client.run_until_disconnected()
+        await app.updater.stop()
+        await app.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())
-
+             
