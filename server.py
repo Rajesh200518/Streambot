@@ -24,6 +24,7 @@ BOT_TOKEN      = os.getenv("BOT_TOKEN", "")
 API_ID         = int(os.getenv("API_ID", "0"))
 API_HASH       = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
+BASE_URL       = os.getenv("BASE_URL", "").rstrip("/")
 DB_FILE        = "files_db.json"
 
 # ── Telethon client ───────────────────────────────────────────────────────────
@@ -38,8 +39,8 @@ app.add_middleware(
 # ── Startup / shutdown ────────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
-    await tg.start(bot_token=BOT_TOKEN)
-    print("✅ Telethon connected")
+    await tg.start()   # ✅ Uses SESSION_STRING — no bot_token re-auth, no FloodWait
+    print("✅  Telethon connected")
 
 @app.on_event("shutdown")
 async def shutdown():
@@ -75,7 +76,6 @@ async def tg_stream(chat_id: int, message_id: int,
     if not msg or not msg.media:
         raise HTTPException(404, "Message/media not found")
 
-    # Calculate how many bytes to send
     doc        = msg.media.document
     total_size = doc.size
     end        = (offset + limit - 1) if limit else (total_size - 1)
@@ -112,7 +112,6 @@ async def stream(token: str, request: Request):
     chat_id    = meta["chat_id"]
     message_id = meta["message_id"]
 
-    # Parse Range header
     range_header = request.headers.get("range")
     if range_header:
         range_val = range_header.strip().replace("bytes=", "")
@@ -134,7 +133,6 @@ async def stream(token: str, request: Request):
             headers=headers,
         )
 
-    # Full file
     headers = {
         "Accept-Ranges":  "bytes",
         "Content-Length": str(total_size),
@@ -185,10 +183,12 @@ async def watch_page(token: str):
     views     = meta["views"]
     is_video  = mime.startswith("video")
     is_audio  = mime.startswith("audio")
-    stream_url = f"/stream/{token}"
-    dl_url     = f"/download/{token}"
-    vlc_url    = f"vlc://{request_base_url(token)}"
-    mx_url     = f"intent:{stream_url}#Intent;package=com.mxtech.videoplayer.ad;end"
+
+    # ✅ Use full absolute URLs so VLC/MX Player can reach the stream
+    stream_url = f"{BASE_URL}/stream/{token}"
+    dl_url     = f"{BASE_URL}/download/{token}"
+    vlc_url    = stream_url   # VLC button just opens the direct stream URL
+    mx_url     = stream_url   # MX Player button opens the direct stream URL
 
     if is_video:
         player_html = f'<video id="player" controls preload="metadata" src="{stream_url}"></video>'
@@ -341,7 +341,4 @@ async def watch_page(token: str):
 </script>
 </body>
 </html>""")
-
-def request_base_url(token):
-    return f"/stream/{token}"
-  
+    
