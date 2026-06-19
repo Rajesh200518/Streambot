@@ -14,21 +14,19 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from telethon import TelegramClient
-from telethon.sessions import StringSession
 from telethon.tl.types import InputDocumentFileLocation
 
 load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
-BOT_TOKEN      = os.getenv("BOT_TOKEN", "")
-API_ID         = int(os.getenv("API_ID", "0"))
-API_HASH       = os.getenv("API_HASH", "")
-SESSION_STRING = os.getenv("SESSION_STRING", "")
-BASE_URL       = os.getenv("BASE_URL", "").rstrip("/")
-DB_FILE        = "files_db.json"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+API_ID    = int(os.getenv("API_ID", "0"))
+API_HASH  = os.getenv("API_HASH", "")
+BASE_URL  = os.getenv("BASE_URL", "").rstrip("/")
+DB_FILE   = "files_db.json"
 
-# ── Telethon client ───────────────────────────────────────────────────────────
-tg = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+# ── Telethon client (file-based session — no StringSession needed) ─────────────
+tg = TelegramClient("bot_session", API_ID, API_HASH)
 
 app = FastAPI(title="StreamBot 4GB+")
 app.add_middleware(
@@ -341,4 +339,4 @@ async def watch_page(token: str):
 </script>
 </body>
 </html>""")
-    
+            
