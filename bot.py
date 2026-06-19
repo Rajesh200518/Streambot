@@ -200,20 +200,16 @@ async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         message_id     = msg.message_id,
     )
 
-    watch_url = f"{BASE_URL}/watch/{token}"
-    dl_url    = f"{BASE_URL}/download/{token}"
-    vlc_url   = f"vlc://{BASE_URL}/stream/{token}"
-    mx_url    = f"intent:{BASE_URL}/stream/{token}#Intent;package=com.mxtech.videoplayer.ad;end"
+    watch_url  = f"{BASE_URL}/watch/{token}"
+    dl_url     = f"{BASE_URL}/download/{token}"
+    stream_url = f"{BASE_URL}/stream/{token}"
 
+    # VLC/MX buttons use http links — Telegram blocks vlc:// and intent:// schemes
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("▶️ Watch Online", url=watch_url)],
         [
-            InlineKeyboardButton("📥 Download",  url=dl_url),
-            InlineKeyboardButton("🔗 Copy Link", url=watch_url),
-        ],
-        [
-            InlineKeyboardButton("🔵 VLC",       url=vlc_url),
-            InlineKeyboardButton("▶️ MX Player", url=mx_url),
+            InlineKeyboardButton("📥 Download",   url=dl_url),
+            InlineKeyboardButton("🔗 Stream URL", url=stream_url),
         ],
         [InlineKeyboardButton("🗑 Delete", callback_data=f"del:{token}")],
     ])
@@ -272,4 +268,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-             
+  
