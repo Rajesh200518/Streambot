@@ -18,13 +18,17 @@ Config (.env):
 import os, logging, hashlib, json, asyncio
 from datetime import datetime
 from dotenv import load_dotenv
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatJoinRequest
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    CallbackQueryHandler, filters, ContextTypes,
+    CallbackQueryHandler, ChatJoinRequestHandler, filters, ContextTypes,
 )
 from telethon import TelegramClient
 from telethon.sessions import StringSession
+import db
+import settings
+import fsub
+import script
 
 load_dotenv()
 
@@ -35,6 +39,15 @@ API_HASH       = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")   # generated once via gen_session.py
 BASE_URL       = os.getenv("BASE_URL", "http://localhost:8000")
 ADMIN_IDS      = list(map(int, os.getenv("ADMIN_IDS", "0").split(",")))
+LOG_CHANNEL    = int(os.getenv("LOG_CHANNEL", "0"))
+START_IMAGE    = os.getenv("START_IMAGE", "")
+CHANNEL_NAME   = os.getenv("CHANNEL_NAME", "Our Channel")
+BOT_VERSION    = os.getenv("BOT_VERSION", "v1.0.0")
+BOT_HOSTING    = os.getenv("BOT_HOSTING", "VPS")
+SOURCE_CODE    = os.getenv("SOURCE_CODE", "")
+DEVELOPER      = os.getenv("DEVELOPER", "@Admin")
+BOT_NAME       = os.getenv("BOT_NAME", "StreamBot")
+
 DB_FILE        = "files_db.json"
 
 logging.basicConfig(
@@ -99,31 +112,108 @@ def is_admin(uid: int) -> bool:
 # ── Commands ──────────────────────────────────────────────────────────────────
 async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     name = update.effective_user.first_name
-    await update.message.reply_text(
-        f"👋 Hello *{name}*!\n\n"
-        "I'm your *File Streaming Bot* with **4 GB+ support**.\n\n"
-        "📤 Send me any file and I'll give you:\n"
-        "• Browser streaming link\n"
-        "• VLC & MX Player links\n"
-        "• Direct download\n\n"
-        "/help — all commands",
-        parse_mode="Markdown",
-    )
+    text = script.START_TEXT.format(name=name)
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📢 Join {CHANNEL_NAME}", url=os.getenv("CHANNEL_LINK", "https://t.me/"))],
+        [InlineKeyboardButton("⚙️ Settings", callback_data="start:settings"),
+         InlineKeyboardButton("❓ Help", callback_data="start:help")],
+        [InlineKeyboardButton("ℹ️ About", callback_data="start:about")],
+    ])
+    try:
+        if START_IMAGE:
+            await update.message.reply_photo(
+                photo=START_IMAGE, caption=text,
+                parse_mode="HTML", reply_markup=kb)
+        else:
+            await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
 
 async def help_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🏠 Home", callback_data="start:home"),
+         InlineKeyboardButton("ℹ️ About", callback_data="start:about")],
+        [InlineKeyboardButton("❌ Close", callback_data="start:close")],
+    ])
     await update.message.reply_text(
-        "*Commands*\n\n"
-        "/start     — Welcome\n"
-        "/help      — This message\n"
-        "/myfiles   — Your uploaded files (last 10)\n"
-        "/delete \\<token\\> — Delete a file\n\n"
-        "*Supported sizes:* Up to **4 GB** ✅\n"
-        "*Supported types:* Video, Audio, Documents",
-        parse_mode="Markdown",
-    )
+        script.HELP_TEXT, parse_mode="HTML", reply_markup=kb)
+
+
+async def about_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    rows = []
+    if SOURCE_CODE:
+        rows.append([InlineKeyboardButton("📂 Source Code", url=SOURCE_CODE)])
+    rows.append([InlineKeyboardButton("🏠 Home", callback_data="start:home"),
+                 InlineKeyboardButton("❌ Close", callback_data="start:close")])
+    kb = InlineKeyboardMarkup(rows)
+    text = script.ABOUT_TEXT.format(
+        bot_name=BOT_NAME, developer=DEVELOPER,
+        channel_name=CHANNEL_NAME, version=BOT_VERSION, hosting=BOT_HOSTING)
+    try:
+        await update.message.reply_photo(
+            photo=START_IMAGE, caption=text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+async def start_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+
+    if q.data == "start:help":
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🏠 Home", callback_data="start:home"),
+             InlineKeyboardButton("ℹ️ About", callback_data="start:about")],
+            [InlineKeyboardButton("❌ Close", callback_data="start:close")],
+        ])
+        try:
+            await q.edit_message_caption(
+                caption=script.HELP_TEXT, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await q.edit_message_text(
+                script.HELP_TEXT, parse_mode="HTML", reply_markup=kb)
+
+    elif q.data == "start:about":
+        rows = []
+        if SOURCE_CODE:
+            rows.append([InlineKeyboardButton("📂 Source Code", url=SOURCE_CODE)])
+        rows.append([InlineKeyboardButton("🏠 Home", callback_data="start:home"),
+                     InlineKeyboardButton("❌ Close", callback_data="start:close")])
+        kb = InlineKeyboardMarkup(rows)
+        text = script.ABOUT_TEXT.format(
+            bot_name=BOT_NAME, developer=DEVELOPER,
+            channel_name=CHANNEL_NAME, version=BOT_VERSION, hosting=BOT_HOSTING)
+        try:
+            await q.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+
+    elif q.data == "start:settings":
+        await q.message.delete()
+        await settings.settings_cmd(update, ctx)
+
+    elif q.data == "start:home":
+        name = q.from_user.first_name
+        text = script.START_TEXT.format(name=name)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton(f"📢 Join {CHANNEL_NAME}",
+                                  url=os.getenv("CHANNEL_LINK", "https://t.me/"))],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="start:settings"),
+             InlineKeyboardButton("❓ Help", callback_data="start:help")],
+            [InlineKeyboardButton("ℹ️ About", callback_data="start:about")],
+        ])
+        try:
+            await q.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+
+    elif q.data == "start:close":
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
 
 async def my_files(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
+    uid = update.effective_user.id if update.effective_user else (msg.chat_id if msg else 0)
     db  = load_db()
     mine = [(t, m) for t, m in db.items() if m["uploader_id"] == uid]
     if not mine:
@@ -147,7 +237,7 @@ async def delete_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if token not in db:
         await update.message.reply_text("❌ File not found.")
         return
-    uid = update.effective_user.id
+    uid = update.effective_user.id if update.effective_user else (msg.chat_id if msg else 0)
     if db[token]["uploader_id"] != uid and not is_admin(uid):
         await update.message.reply_text("❌ Not your file.")
         return
@@ -155,10 +245,155 @@ async def delete_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     save_db(db)
     await update.message.reply_text("✅ File deleted.")
 
+
+# ── FSub Admin Commands ───────────────────────────────────────────────────────
+async def setfsub_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admins only.")
+        return
+    if not ctx.args:
+        await update.message.reply_text(
+            "Usage: /setfsub @username or channel_id\n"
+            "Then optionally: /setfsubmode normal|request")
+        return
+    target = ctx.args[0]
+    try:
+        chat = await ctx.bot.get_chat(target)
+        mode = "normal"
+        cfg  = await db.get_fsub()
+        if cfg:
+            mode = cfg.get("mode", "normal")
+        link = f"https://t.me/{chat.username}" if chat.username else cfg.get("chat_link","") if cfg else ""
+        await db.set_fsub(chat.id, chat.title or target, link, mode, True)
+        await update.message.reply_text(
+            f"✅ Force sub set to <b>{chat.title}</b>\n"
+            f"Mode: <b>{mode}</b>\n"
+            f"Link: {link}\n\n"
+            f"Use /setfsubmode normal|request to change mode.\n"
+            f"Use /setfsublink https://t.me/xxx to set invite link (for private channels).",
+            parse_mode="HTML")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {e}")
+
+async def setfsubmode_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admins only.")
+        return
+    if not ctx.args or ctx.args[0] not in ("normal", "request"):
+        await update.message.reply_text("Usage: /setfsubmode normal|request")
+        return
+    mode = ctx.args[0]
+    cfg  = await db.get_fsub()
+    if not cfg:
+        await update.message.reply_text("❌ Set a channel first with /setfsub")
+        return
+    await db.set_fsub(cfg["chat_id"], cfg["chat_title"], cfg.get("chat_link",""), mode, cfg.get("enabled", True))
+    await update.message.reply_text(f"✅ FSub mode set to <b>{mode}</b>", parse_mode="HTML")
+
+async def setfsublink_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admins only.")
+        return
+    if not ctx.args:
+        await update.message.reply_text("Usage: /setfsublink https://t.me/xxx")
+        return
+    link = ctx.args[0]
+    cfg  = await db.get_fsub()
+    if not cfg:
+        await update.message.reply_text("❌ Set a channel first with /setfsub")
+        return
+    await db.set_fsub(cfg["chat_id"], cfg["chat_title"], link, cfg.get("mode","normal"), cfg.get("enabled", True))
+    await update.message.reply_text(f"✅ FSub link updated to: {link}")
+
+async def removefsub_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admins only.")
+        return
+    await db.disable_fsub()
+    await update.message.reply_text("✅ Force subscription <b>disabled</b>.", parse_mode="HTML")
+
+async def fsubstatus_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admins only.")
+        return
+    cfg = await db.get_fsub()
+    if not cfg or not cfg.get("enabled"):
+        await update.message.reply_text("📊 Force sub: <b>Disabled</b>", parse_mode="HTML")
+        return
+    await update.message.reply_text(
+        f"📊 <b>Force Sub Status</b>\n\n"
+        f"📣 Channel: <b>{cfg.get('chat_title','?')}</b>\n"
+        f"🆔 ID: <code>{cfg.get('chat_id','?')}</code>\n"
+        f"🔗 Link: {cfg.get('chat_link','—')}\n"
+        f"⚙️ Mode: <b>{cfg.get('mode','normal')}</b>\n"
+        f"✅ Status: <b>Enabled</b>",
+        parse_mode="HTML")
+
+# ── process_file_data — called after fsub verified ────────────────────────────
+async def process_file_data(bot, uid: int, pdata: dict):
+    """Re-process a file after fsub verification. Sends result to user PM."""
+    watch_url  = pdata["watch_url"]
+    dl_url     = pdata["dl_url"]
+    stream_url = pdata["stream_url"]
+    file_name  = pdata["file_name"]
+    icon       = pdata["icon"]
+    size_bytes = pdata["size_bytes"]
+    size_note  = pdata["size_note"]
+    token      = pdata["token"]
+
+    user_cfg  = await db.get_user(uid)
+    short_en  = user_cfg.get("shortener_enabled", True)
+    display_watch_url = watch_url
+    if short_en and user_cfg.get("shortener_url") and user_cfg.get("shortener_api_key"):
+        display_watch_url = await settings.shorten_url(
+            user_cfg["shortener_url"], user_cfg["shortener_api_key"], watch_url)
+
+    upload_mode = user_cfg.get("upload_mode", "buttons")
+    pm_template = user_cfg.get("caption_template")
+
+    if pm_template:
+        caption = (pm_template
+            .replace("{caption}",       file_name)
+            .replace("{file_name}",     file_name)
+            .replace("{stream_link}",   display_watch_url)
+            .replace("{watch_url}",     display_watch_url)
+            .replace("{download_link}", dl_url)
+            .replace("{dl_url}",        dl_url)
+            .replace("{size}",          fmt_size(size_bytes))
+            .replace("{token}",         token))
+    else:
+        pm_note = script.PM_NOTE.format(
+            channel_name=CHANNEL_NAME,
+            channel_link=os.getenv("CHANNEL_LINK", ""))
+        caption = (
+            f"{icon} <b>{file_name}</b>\n\n"
+            f"📦 Size: <code>{fmt_size(size_bytes)}</code>\n"
+            f"🔑 Token: <code>{token}</code>"
+            f"{size_note}\n\n"
+            f"🔗 <b>Link:</b>\n<code>{display_watch_url}</code>"
+            + pm_note
+        )
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("▶️ Watch Online", url=display_watch_url)],
+        [InlineKeyboardButton("📥 Download",    url=dl_url),
+         InlineKeyboardButton("🔗 Stream URL",  url=stream_url)],
+        [InlineKeyboardButton("🗑 Delete", callback_data=f"del:{token}")],
+    ])
+    try:
+        await bot.send_message(uid, caption, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await bot.send_message(uid, caption, reply_markup=kb)
+
 # ── File Handler ──────────────────────────────────────────────────────────────
 async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    msg = update.message
-    uid = update.effective_user.id
+    msg = update.message or update.channel_post
+    uid = update.effective_user.id if update.effective_user else (msg.chat_id if msg else 0)
 
     if msg.video:
         f         = msg.video
@@ -203,27 +438,236 @@ async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     watch_url  = f"{BASE_URL}/watch/{token}"
     dl_url     = f"{BASE_URL}/download/{token}"
     stream_url = f"{BASE_URL}/stream/{token}"
+    is_channel = bool(update.channel_post)
+    display_watch_url = watch_url
 
-    # VLC/MX buttons use http links — Telegram blocks vlc:// and intent:// schemes
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("▶️ Watch Online", url=watch_url)],
-        [
-            InlineKeyboardButton("📥 Download",   url=dl_url),
-            InlineKeyboardButton("🔗 Stream URL", url=stream_url),
-        ],
-        [InlineKeyboardButton("🗑 Delete", callback_data=f"del:{token}")],
-    ])
+    if is_channel:
+        ch_cfg = await db.get_channel(msg.chat_id)
+        if ch_cfg and ch_cfg.get("shortener_url") and ch_cfg.get("shortener_api_key"):
+            display_watch_url = await settings.shorten_url(
+                ch_cfg["shortener_url"], ch_cfg["shortener_api_key"], watch_url
+            )
+        ch_template = ch_cfg.get("caption_template") if ch_cfg else None
+        if ch_template:
+            caption = (ch_template
+                .replace("{caption}", file_name)
+                .replace("{file_name}", file_name)
+                .replace("{stream_link}", display_watch_url)
+                .replace("{watch_url}", display_watch_url)
+                .replace("{download_link}", dl_url)
+                .replace("{dl_url}", dl_url)
+                .replace("{size}", fmt_size(size_bytes))
+                .replace("{token}", token))
+        else:
+            caption = (
+                f"{icon} {file_name}\n\n"
+                f"🔗 Watch: {display_watch_url}"
+                f"{size_note}"
+            )
+        from telethon.tl.types import InputMediaEmpty
+        from telethon import Button
+        buttons_on = ch_cfg.get('buttons_enabled', True) if ch_cfg else True
+        buttons_on = ch_cfg.get('buttons_enabled', True) if ch_cfg else True
+        tl_buttons = [
+            [Button.url("▶️ Watch Online", display_watch_url)],
+            [Button.url("📥 Download", dl_url)],
+        ]
+        await proc.delete()
+        try:
+            await tg_client.edit_message(
+                msg.chat_id,
+                msg.message_id,
+                text=caption,
+                buttons=tl_buttons if buttons_on else None,
+            )
+        except Exception as e:
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("▶️ Watch Online", url=display_watch_url)],
+                [InlineKeyboardButton("📥 Download", url=dl_url)],
+            ])
+            try:
+                await msg.reply_text(caption, parse_mode="HTML", reply_markup=kb)
+            except Exception:
+                await msg.reply_text(caption, reply_markup=kb)
+        # ── Log to log channel ────────────────────────────────────────────
+        if LOG_CHANNEL:
+            try:
+                now = datetime.utcnow().strftime('%d %b %Y, %I:%M %p UTC')
+                ch_username = f"@{msg.chat.username}" if msg.chat.username else "private"
+                log_text = (
+                    f"📡 <b>Channel File Upload</b>\n\n"
+                    f"📣 Channel: <b>{msg.chat.title}</b> ({ch_username})\n"
+                    f"🆔 ID: <code>{msg.chat_id}</code>\n"
+                    f"📄 File: <b>{file_name}</b>\n"
+                    f"📦 Size: <code>{fmt_size(size_bytes)}</code>\n"
+                    f"🔗 Link: {watch_url}\n"
+                    f"⏰ Time: {now}"
+                )
+                log_kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("▶️ Watch Online", url=watch_url)],
+                    [InlineKeyboardButton("📥 Download", url=dl_url)],
+                ])
+                await ctx.bot.forward_message(
+                    chat_id=LOG_CHANNEL,
+                    from_chat_id=msg.chat_id,
+                    message_id=msg.message_id,
+                )
+                await ctx.bot.send_message(
+                    LOG_CHANNEL, log_text, parse_mode="HTML", reply_markup=log_kb)
+            except Exception as e:
+                logger.warning(f"Log channel error: {e}")
+    else:
+        # ── Force subscription check (PM only) ───────────────────────────────
+        pdata = {
+            "watch_url": watch_url, "dl_url": dl_url, "stream_url": stream_url,
+            "file_name": file_name, "icon": icon, "size_bytes": size_bytes,
+            "size_note": size_note, "token": token,
+        }
+        if not await fsub.fsub_check(update, ctx, pdata):
+            await proc.delete()
+            return
+        # ─────────────────────────────────────────────────────────────────────
+        user_cfg = await db.get_user(uid)
+        upload_mode  = user_cfg.get("upload_mode", "buttons")
+        short_en     = user_cfg.get("shortener_enabled", True)
+        if short_en and user_cfg.get("shortener_url") and user_cfg.get("shortener_api_key"):
+            display_watch_url = await settings.shorten_url(
+                user_cfg["shortener_url"], user_cfg["shortener_api_key"], watch_url
+            )
 
-    caption = (
-        f"{icon} *{file_name}*\n\n"
-        f"📦 Size: `{fmt_size(size_bytes)}`\n"
-        f"🔑 Token: `{token}`"
-        f"{size_note}\n\n"
-        f"🔗 *Link:*\n`{watch_url}`"
-    )
-
-    await proc.delete()
-    await msg.reply_text(caption, parse_mode="Markdown", reply_markup=kb)
+        if upload_mode == "files":
+            # ── Files mode: edit original message caption (same as channel) ──
+            pm_template = user_cfg.get("caption_template")
+            if pm_template:
+                caption = (pm_template
+                    .replace("{caption}",       file_name)
+                    .replace("{file_name}",     file_name)
+                    .replace("{stream_link}",   display_watch_url)
+                    .replace("{watch_url}",     display_watch_url)
+                    .replace("{download_link}", dl_url)
+                    .replace("{dl_url}",        dl_url)
+                    .replace("{size}",          fmt_size(size_bytes))
+                    .replace("{token}",         token))
+            else:
+                caption = (
+                    f"{icon} {file_name}\n\n"
+                    f"🔗 Watch: {display_watch_url}"
+                    f"{size_note}"
+                )
+            from telethon import Button as TlButton
+            buttons_on = user_cfg.get("buttons_enabled", True)
+            tl_btns = [
+                [TlButton.url("▶️ Watch Online", display_watch_url)],
+                [TlButton.url("📥 Download", dl_url)],
+            ]
+            await proc.delete()
+            try:
+                await tg_client.edit_message(
+                    msg.chat_id,
+                    msg.message_id,
+                    text=caption,
+                    buttons=tl_btns if buttons_on else None,
+                )
+            except Exception:
+                kb = InlineKeyboardMarkup([
+                    [InlineKeyboardButton("▶️ Watch Online", url=display_watch_url)],
+                    [InlineKeyboardButton("📥 Download", url=dl_url)],
+                ])
+                try:
+                    await msg.reply_text(caption, parse_mode="HTML", reply_markup=kb)
+                except Exception:
+                    await msg.reply_text(caption, reply_markup=kb)
+            # ── Log to log channel ────────────────────────────────────────
+            if LOG_CHANNEL:
+                try:
+                    now = datetime.utcnow().strftime("%d %b %Y, %I:%M %p UTC")
+                    user = update.effective_user
+                    uname = f"@{user.username}" if user and user.username else "no username"
+                    uname_str = user.first_name if user else "Unknown"
+                    uid_str = uid
+                    log_text = (
+                        f"📤 <b>PM File Upload (Files Mode)</b>\n\n"
+                        f"👤 User: <b>{uname_str}</b> ({uname})\n"
+                        f"🆔 User ID: <code>{uid_str}</code>\n"
+                        f"📄 File: <b>{file_name}</b>\n"
+                        f"📦 Size: <code>{fmt_size(size_bytes)}</code>\n"
+                        f"🔗 Link: {watch_url}\n"
+                        f"⏰ Time: {now}"
+                    )
+                    log_kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("▶️ Watch Online", url=watch_url)],
+                        [InlineKeyboardButton("📥 Download", url=dl_url)],
+                    ])
+                    await ctx.bot.forward_message(
+                        chat_id=LOG_CHANNEL,
+                        from_chat_id=msg.chat_id,
+                        message_id=msg.message_id,
+                    )
+                    await ctx.bot.send_message(
+                        LOG_CHANNEL, log_text,
+                        parse_mode="HTML", reply_markup=log_kb)
+                except Exception as e:
+                    logger.warning(f"Log channel error: {e}")
+        else:
+            # ── Buttons mode: reply with inline keyboard (default) ──
+            pm_template = user_cfg.get("caption_template")
+            if pm_template:
+                caption = (pm_template
+                    .replace("{caption}",       file_name)
+                    .replace("{file_name}",     file_name)
+                    .replace("{stream_link}",   display_watch_url)
+                    .replace("{watch_url}",     display_watch_url)
+                    .replace("{download_link}", dl_url)
+                    .replace("{dl_url}",        dl_url)
+                    .replace("{size}",          fmt_size(size_bytes))
+                    .replace("{token}",         token))
+            else:
+                caption = (
+                    f"{icon} <b>{file_name}</b>\n\n"
+                    f"📦 Size: <code>{fmt_size(size_bytes)}</code>\n"
+                    f"🔑 Token: <code>{token}</code>"
+                    f"{size_note}\n\n"
+                    f"🔗 <b>Link:</b>\n<code>{display_watch_url}</code>"
+                )
+            kb = InlineKeyboardMarkup([
+                [InlineKeyboardButton("▶️ Watch Online", url=display_watch_url)],
+                [InlineKeyboardButton("📥 Download", url=dl_url)],
+                [InlineKeyboardButton("🗑 Delete", callback_data=f"del:{token}")],
+            ])
+            await proc.delete()
+            try:
+                await msg.reply_text(caption, parse_mode="HTML", reply_markup=kb)
+            except Exception:
+                await msg.reply_text(caption, reply_markup=kb)
+            # ── Log to log channel ────────────────────────────────────────
+            if LOG_CHANNEL:
+                try:
+                    now = datetime.utcnow().strftime('%d %b %Y, %I:%M %p UTC')
+                    user = update.effective_user
+                    uname = f"@{user.username}" if user and user.username else "no username"
+                    uname_str = user.first_name if user else "Unknown"
+                    log_text = (
+                        f"📤 <b>PM File Upload</b>\n\n"
+                        f"👤 User: <b>{uname_str}</b> ({uname})\n"
+                        f"🆔 User ID: <code>{uid}</code>\n"
+                        f"📄 File: <b>{file_name}</b>\n"
+                        f"📦 Size: <code>{fmt_size(size_bytes)}</code>\n"
+                        f"🔗 Link: {watch_url}\n"
+                        f"⏰ Time: {now}"
+                    )
+                    log_kb = InlineKeyboardMarkup([
+                        [InlineKeyboardButton("▶️ Watch Online", url=watch_url)],
+                        [InlineKeyboardButton("📥 Download", url=dl_url)],
+                    ])
+                    await ctx.bot.forward_message(
+                        chat_id=LOG_CHANNEL,
+                        from_chat_id=msg.chat_id,
+                        message_id=msg.message_id,
+                    )
+                    await ctx.bot.send_message(
+                        LOG_CHANNEL, log_text, parse_mode="HTML", reply_markup=log_kb)
+                except Exception as e:
+                    logger.warning(f"Log channel error: {e}")
 
 # ── Callback ──────────────────────────────────────────────────────────────────
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -246,13 +690,40 @@ async def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start",   start))
+    app.add_handler(CommandHandler("about",   about_cmd))
+    app.add_handler(CallbackQueryHandler(start_callback, pattern="^start:"))
     app.add_handler(CommandHandler("help",    help_cmd))
     app.add_handler(CommandHandler("myfiles", my_files))
     app.add_handler(CommandHandler("delete",  delete_cmd))
+    app.add_handler(CommandHandler("settings",    settings.settings_cmd))
+    app.add_handler(CommandHandler("setfsub",     setfsub_cmd))
+    app.add_handler(CommandHandler("removefsub",  removefsub_cmd))
+    app.add_handler(CommandHandler("setfsubmode", setfsubmode_cmd))
+    app.add_handler(CommandHandler("setfsublink", setfsublink_cmd))
+    app.add_handler(CommandHandler("fsubstatus",  fsubstatus_cmd))
+    app.add_handler(CallbackQueryHandler(fsub.handle_fsub_callback, pattern="^fsub:"))
+    app.add_handler(ChatJoinRequestHandler(fsub.handle_join_request))
+    app.add_handler(CallbackQueryHandler(settings.settings_callback, pattern="^set:"))
+    app.add_handler(MessageHandler(
+        filters.FORWARDED & settings.pending_add_filter,
+        settings.handle_add_channel,
+    ))
+    app.add_handler(MessageHandler(
+        filters.TEXT & ~filters.COMMAND & settings.pending_text_filter,
+        settings.handle_settings_text,
+    ))
     app.add_handler(MessageHandler(
         filters.VIDEO | filters.Document.ALL | filters.AUDIO,
         handle_file,
     ))
+
+    # Channel post handler
+    app.add_handler(MessageHandler(
+        filters.UpdateType.CHANNEL_POST & (filters.VIDEO | filters.Document.ALL | filters.AUDIO),
+        handle_file,
+    ))
+
+    # Channel post handler (files sent to connected channels)
     app.add_handler(CallbackQueryHandler(handle_callback))
 
     logger.info("Bot polling started ✅")

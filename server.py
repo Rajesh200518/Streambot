@@ -1,3 +1,5 @@
+import unicodedata
+import re
 """
 FastAPI Streaming Server — 4GB+ Support via Telethon MTProto
 =============================================================
@@ -8,7 +10,8 @@ Run:
     uvicorn server:app --host 0.0.0.0 --port 8000
 """
 
-import os, json, asyncio, mimetypes
+import os
+import themes as _themes, json, asyncio, mimetypes
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, HTMLResponse
@@ -27,6 +30,13 @@ DB_FILE   = "files_db.json"
 
 # ── Telethon client (file-based session — no StringSession needed) ─────────────
 tg = TelegramClient("bot_session", API_ID, API_HASH)
+
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", "https://t.me/")
+DISCLAIMER_TEXT = os.getenv("DISCLAIMER_TEXT", "")
+
+BRAND_PRIMARY = os.getenv("BRAND_PRIMARY", "Ask")
+BRAND_ACCENT = os.getenv("BRAND_ACCENT", "Botz")
+BRAND_TAGLINE = os.getenv("BRAND_TAGLINE", "Premium Streaming")
 
 app = FastAPI(title="StreamBot 4GB+")
 app.add_middleware(
@@ -98,6 +108,13 @@ async def tg_stream(chat_id: int, message_id: int,
 async def index():
     return HTMLResponse("<h2>StreamBot 4GB+ is running ✅</h2>")
 
+
+
+def safe_filename(name):
+    name = unicodedata.normalize("NFKD", name)
+    name = name.encode("ascii", "ignore").decode("ascii")
+    name = re.sub(r"[^\w\s\-\.]", "", name).strip()
+    return name or "video"
 @app.get("/stream/{token}")
 async def stream(token: str, request: Request):
     db = load_db()
@@ -122,7 +139,7 @@ async def stream(token: str, request: Request):
             "Content-Range":  f"bytes {start}-{end}/{total_size}",
             "Accept-Ranges":  "bytes",
             "Content-Length": str(length),
-            "Content-Disposition": f'inline; filename="{meta["file_name"]}"',
+            "Content-Disposition": f'inline; filename="{safe_filename(meta["file_name"])}"',
         }
         return StreamingResponse(
             tg_stream(chat_id, message_id, offset=start, limit=length),
@@ -134,7 +151,7 @@ async def stream(token: str, request: Request):
     headers = {
         "Accept-Ranges":  "bytes",
         "Content-Length": str(total_size),
-        "Content-Disposition": f'inline; filename="{meta["file_name"]}"',
+        "Content-Disposition": f'inline; filename="{safe_filename(meta["file_name"])}"',
     }
     return StreamingResponse(
         tg_stream(chat_id, message_id),
@@ -159,7 +176,7 @@ async def download(token: str):
         tg_stream(chat_id, message_id),
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": f'attachment; filename="{meta["file_name"]}"',
+            "Content-Disposition": f'attachment; filename="{safe_filename(meta["file_name"])}"',
             "Content-Length":      str(total_size),
         },
     )
@@ -206,23 +223,21 @@ async def watch_page(token: str):
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{name} — StreamBot</title>
 <style>
-  :root {{
-    --bg:#0d0d0d; --surface:#161616; --card:#1e1e1e;
-    --border:#2a2a2a; --accent:#5b5ef4; --accent2:#a78bfa;
-    --text:#f0f0f0; --muted:#888; --green:#22c55e;
-  }}
+  {theme_css}
   *{{ box-sizing:border-box; margin:0; padding:0; }}
   body{{ background:var(--bg); color:var(--text);
     font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; }}
 
   header{{ background:var(--surface); border-bottom:1px solid var(--border);
-    padding:14px 20px; display:flex; align-items:center; gap:10px; }}
-  .logo{{ width:36px; height:36px;
+    padding:14px 20px; display:flex; align-items:center; gap:12px; }}
+  .logo{{ width:42px; height:42px;
     background:linear-gradient(135deg,var(--accent),var(--accent2));
-    border-radius:10px; display:flex; align-items:center;
-    justify-content:center; font-size:18px; }}
+    border-radius:12px; display:flex; align-items:center;
+    justify-content:center; font-size:19px; flex-shrink:0;
+    box-shadow:0 4px 14px rgba(91,94,244,.35); }}
   .brand{{ font-size:16px; font-weight:700; }}
   .brand span{{ color:var(--accent2); }}
+  .tagline{{ font-size:13px; color:var(--muted); margin-top:2px; }}
 
   .player-wrap{{ background:#000; display:flex; align-items:center;
     justify-content:center; min-height:240px; max-height:70vh; }}
@@ -269,6 +284,16 @@ async def watch_page(token: str):
     display:inline-block; margin-right:6px; animation:pulse 1.5s infinite; }}
   @keyframes pulse{{ 0%,100%{{opacity:1}} 50%{{opacity:.4}} }}
 
+  .disclaimer-section{{ max-width:680px; margin:0 auto; padding:30px 16px 0; }}
+  .divider{{ border:none; border-top:1px solid var(--border); margin-bottom:24px; }}
+  .disclaimer-heading{{ display:flex; align-items:center; justify-content:center;
+    gap:10px; font-size:17px; font-weight:800; margin-bottom:18px;
+    text-transform:uppercase; letter-spacing:.5px; }}
+  .disclaimer-heading .icon{{ font-size:20px; }}
+  .disclaimer-card{{ background:var(--card); border:1px solid var(--border);
+    border-radius:16px; padding:18px; text-align:left; }}
+  .disclaimer-card h3{{ font-size:15px; font-weight:700; margin-bottom:10px; }}
+  .disclaimer-card p{{ font-size:13px; color:var(--muted); line-height:1.6; }}
   footer{{ text-align:center; padding:30px 20px; color:var(--muted);
     font-size:12px; border-top:1px solid var(--border); margin-top:24px; }}
 
@@ -282,7 +307,10 @@ async def watch_page(token: str):
 
 <header>
   <div class="logo">▶</div>
-  <div><div class="brand">Stream<span>Bot</span></div></div>
+  <div>
+    <div class="brand">{BRAND_PRIMARY} <span>{BRAND_ACCENT}</span></div>
+    <div class="tagline">{BRAND_TAGLINE}</div>
+  </div>
 </header>
 
 <div class="player-wrap">{player_html}</div>
@@ -304,6 +332,7 @@ async def watch_page(token: str):
     <div class="btn-grid">
       <a class="btn btn-primary" href="{dl_url}" download>📥 Download File</a>
       <a class="btn btn-outline" href="#" onclick="copyLink()">🔗 Copy Link</a>
+      <a class="btn btn-outline" href="{CHANNEL_LINK}" target="_blank">📢 More Content</a>
       <a class="btn btn-vlc"    href="{vlc_url}">🔵 Open VLC</a>
       <a class="btn btn-mx"     href="{mx_url}">▶️ Open MX Player</a>
     </div>
@@ -319,7 +348,15 @@ async def watch_page(token: str):
   </div>
 </div>
 
-<footer>Powered by <strong>StreamBot</strong> — MTProto · 4 GB+ Support</footer>
+<div class="disclaimer-section">
+  <hr class="divider">
+  <div class="disclaimer-heading"><span class="icon">🛡️</span>{BRAND_PRIMARY} {BRAND_ACCENT} PROJECT</div>
+  <div class="disclaimer-card">
+    <h3>DMCA DISCLAIMER</h3>
+    <p>{DISCLAIMER_TEXT}</p>
+  </div>
+</div>
+<footer>Powered by <strong>Ask Botz</strong> — MTProto · 4 GB+ Support</footer>
 
 <script>
   function copyLink(){{
@@ -340,3 +377,4 @@ async def watch_page(token: str):
 </body>
 </html>""")
             
+# patch applied below — ignore this line
