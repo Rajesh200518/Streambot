@@ -128,3 +128,15 @@ async def set_join_request(uid: int, chat_id: int):
         {"$set": {"uid": uid, "chat_id": chat_id}},
         upsert=True,
     )
+
+# ── File Counter ──────────────────────────────────────────────────────────────
+counter_col = db["counter"]
+
+async def get_next_file_number() -> int:
+    result = await counter_col.find_one_and_update(
+        {"_id": "file_counter"},
+        {"$inc": {"seq": 1}},
+        upsert=True,
+        return_document=True,
+    )
+    return result["seq"]

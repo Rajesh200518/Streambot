@@ -15,7 +15,7 @@ Config (.env):
   ADMIN_IDS    — your Telegram user ID
 """
 
-import os, logging, hashlib, json, asyncio
+import os, logging, json, asyncio, secrets
 from datetime import datetime
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ChatJoinRequest
@@ -73,29 +73,31 @@ def save_db(db: dict):
     with open(DB_FILE, "w") as f:
         json.dump(db, f, indent=2)
 
-def add_file(
+async def add_file(
     file_id: str, file_unique_id: str,
     file_name: str, file_size: int,
     mime_type: str, uploader_id: int,
     chat_id: int, message_id: int,
 ) -> str:
-    db = load_db()
-    token = hashlib.sha256(
-        f"{file_unique_id}{datetime.utcnow().isoformat()}".encode()
-    ).hexdigest()[:16]
-    db[token] = {
-        "file_id":       file_id,
+    import secrets
+    file_num  = await db.get_next_file_number()
+    short_key = secrets.token_urlsafe(4)[:6]
+    token     = f"{file_num:06d}_{short_key}"
+    fdb = load_db()
+    fdb[token] = {
+        "file_id":        file_id,
         "file_unique_id": file_unique_id,
-        "file_name":     file_name,
-        "file_size":     file_size,
-        "mime_type":     mime_type,
-        "uploader_id":   uploader_id,
-        "chat_id":       chat_id,        # needed for Telethon streaming
-        "message_id":    message_id,     # needed for Telethon streaming
-        "uploaded_at":   datetime.utcnow().isoformat(),
-        "views":         0,
+        "file_name":      file_name,
+        "file_size":      file_size,
+        "mime_type":      mime_type,
+        "uploader_id":    uploader_id,
+        "chat_id":        chat_id,
+        "message_id":     message_id,
+        "uploaded_at":    datetime.utcnow().isoformat(),
+        "views":          0,
+        "file_number":    file_num,
     }
-    save_db(db)
+    save_db(fdb)
     return token
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -115,9 +117,9 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     text = script.START_TEXT.format(name=name)
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton(f"📢 Join {CHANNEL_NAME}", url=os.getenv("CHANNEL_LINK", "https://t.me/"))],
-        [InlineKeyboardButton("⚙️ Settings", callback_data="start:settings"),
+        [InlineKeyboardButton("ℹ️ About", callback_data="start:about"),
          InlineKeyboardButton("❓ Help", callback_data="start:help")],
-        [InlineKeyboardButton("ℹ️ About", callback_data="start:about")],
+        [InlineKeyboardButton("⚙️ Settings", callback_data="start:settings")],
     ])
     try:
         if START_IMAGE:
@@ -188,8 +190,22 @@ async def start_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
 
     elif q.data == "start:settings":
-        await q.message.delete()
-        await settings.settings_cmd(update, ctx)
+        kb = InlineKeyboardMarkup([
+            [InlineKeyboardButton("👤 Bot PM Settings",   callback_data="set:pm")],
+            [InlineKeyboardButton("📡 Channels Settings", callback_data="set:channels")],
+            [InlineKeyboardButton("🏠 Home", callback_data="start:home"),
+             InlineKeyboardButton("❌ Close", callback_data="start:close")],
+        ])
+        try:
+            await q.edit_message_caption(
+                caption="⚙️ <b>SETTINGS</b>\n\nChoose what to configure:",
+
+                parse_mode="HTML", reply_markup=kb)
+        except Exception:
+            await q.edit_message_text(
+                "⚙️ <b>SETTINGS</b>\n\nChoose what to configure:",
+
+                parse_mode="HTML", reply_markup=kb)
 
     elif q.data == "start:home":
         name = q.from_user.first_name
@@ -197,9 +213,9 @@ async def start_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton(f"📢 Join {CHANNEL_NAME}",
                                   url=os.getenv("CHANNEL_LINK", "https://t.me/"))],
-            [InlineKeyboardButton("⚙️ Settings", callback_data="start:settings"),
+            [InlineKeyboardButton("ℹ️ About", callback_data="start:about"),
              InlineKeyboardButton("❓ Help", callback_data="start:help")],
-            [InlineKeyboardButton("ℹ️ About", callback_data="start:about")],
+            [InlineKeyboardButton("⚙️ Settings", callback_data="start:settings")],
         ])
         try:
             await q.edit_message_caption(caption=text, parse_mode="HTML", reply_markup=kb)
@@ -224,7 +240,7 @@ async def my_files(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         lines.append(
             f"📄 `{meta['file_name']}`\n"
             f"   {fmt_size(meta['file_size'])}  •  👁 {meta['views']}\n"
-            f"   🔗 {BASE_URL}/watch/{tok}\n"
+            f"   🔗 {BASE_URL}/watch/{tok.split(chr(95))[0]}?hash={tok.split(chr(95))[1] if chr(95) in tok else tok}\n"
         )
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
 
@@ -390,6 +406,121 @@ async def process_file_data(bot, uid: int, pdata: dict):
     except Exception:
         await bot.send_message(uid, caption, reply_markup=kb)
 
+
+# ── Stats Command ─────────────────────────────────────────────────────────────
+async def stats_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admins only.")
+        return
+
+    async def _get_stats():
+        users_count    = await db.users_col.count_documents({})
+        channels_count = await db.channels_col.count_documents({})
+        files_db       = load_db()
+        files_count    = len(files_db)
+        total_size     = sum(v.get("file_size", 0) for v in files_db.values())
+        return users_count, channels_count, files_count, total_size
+
+    users, channels, files, total_size = await _get_stats()
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    text = (
+        f"📊 <b>Bot Statistics Dashboard</b>\n\n"
+        f"👥 <b>Users Stats</b>\n"
+        f"• Total Users: <b>{users}</b>\n\n"
+        f"🤖 <b>Bot & Channel Stats</b>\n"
+        f"• Total Channels: <b>{channels}</b>\n"
+        f"• Total Files: <b>{files}</b>\n"
+        f"• Total Size: <b>{fmt_size(total_size)}</b>\n\n"
+        f"<i>Last Updated: {now}</i>"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh Stats", callback_data="stats:refresh"),
+         InlineKeyboardButton("❌ Close",         callback_data="stats:close")],
+    ])
+    await update.message.reply_text(text, parse_mode="HTML", reply_markup=kb)
+
+async def stats_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = update.callback_query
+    await q.answer()
+    if q.data == "stats:close":
+        try:
+            await q.message.delete()
+        except Exception:
+            pass
+        return
+    # Refresh
+    users    = await db.users_col.count_documents({})
+    channels = await db.channels_col.count_documents({})
+    files_db = load_db()
+    files    = len(files_db)
+    total_size = sum(v.get("file_size", 0) for v in files_db.values())
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    text = (
+        f"📊 <b>Bot Statistics Dashboard</b>\n\n"
+        f"👥 <b>Users Stats</b>\n"
+        f"• Total Users: <b>{users}</b>\n\n"
+        f"🤖 <b>Bot & Channel Stats</b>\n"
+        f"• Total Channels: <b>{channels}</b>\n"
+        f"• Total Files: <b>{files}</b>\n"
+        f"• Total Size: <b>{fmt_size(total_size)}</b>\n\n"
+        f"<i>Last Updated: {now}</i>"
+    )
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔄 Refresh Stats", callback_data="stats:refresh"),
+         InlineKeyboardButton("❌ Close",         callback_data="stats:close")],
+    ])
+    try:
+        await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
+
+# ── Broadcast Command ─────────────────────────────────────────────────────────
+async def broadcast_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        await update.message.reply_text("❌ Admins only.")
+        return
+    if not ctx.args and not update.message.reply_to_message:
+        await update.message.reply_text(
+            "Usage: /broadcast <message>\n"
+            "Or reply to a message with /broadcast")
+        return
+
+    # Get broadcast message
+    if update.message.reply_to_message:
+        bcast_msg = update.message.reply_to_message
+    else:
+        bcast_msg = None
+        bcast_text = " ".join(ctx.args)
+
+    # Get all users
+    users_cursor = db.users_col.find({}, {"_id": 1})
+    users = [u["_id"] async for u in users_cursor]
+
+    status_msg = await update.message.reply_text(
+        f"📣 Broadcasting to <b>{len(users)}</b> users...", parse_mode="HTML")
+
+    success = failed = 0
+    for user_id in users:
+        try:
+            if bcast_msg:
+                await bcast_msg.forward(user_id)
+            else:
+                await ctx.bot.send_message(
+                    user_id, bcast_text, parse_mode="HTML")
+            success += 1
+        except Exception:
+            failed += 1
+        await asyncio.sleep(0.05)  # avoid flood
+
+    await status_msg.edit_text(
+        f"✅ <b>Broadcast Complete</b>\n\n"
+        f"• Sent: <b>{success}</b>\n"
+        f"• Failed: <b>{failed}</b>\n"
+        f"• Total: <b>{len(users)}</b>",
+        parse_mode="HTML")
+
 # ── File Handler ──────────────────────────────────────────────────────────────
 async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     msg = update.message or update.channel_post
@@ -424,7 +555,7 @@ async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     proc = await msg.reply_text("⏳ Processing...")
 
-    token = add_file(
+    token = await add_file(
         file_id        = f.file_id,
         file_unique_id = f.file_unique_id,
         file_name      = file_name,
@@ -435,9 +566,11 @@ async def handle_file(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         message_id     = msg.message_id,
     )
 
-    watch_url  = f"{BASE_URL}/watch/{token}"
-    dl_url     = f"{BASE_URL}/download/{token}"
-    stream_url = f"{BASE_URL}/stream/{token}"
+    # Token format: 000001_a3f9k2 → URL: /watch/000001?hash=a3f9k2
+    _num, _hash = token.split("_", 1) if "_" in token else (token, "")
+    watch_url  = f"{BASE_URL}/watch/{_num}?hash={_hash}"
+    dl_url     = f"{BASE_URL}/download/{_num}?hash={_hash}"
+    stream_url = f"{BASE_URL}/stream/{_num}?hash={_hash}"
     is_channel = bool(update.channel_post)
     display_watch_url = watch_url
 
@@ -696,6 +829,9 @@ async def main():
     app.add_handler(CommandHandler("myfiles", my_files))
     app.add_handler(CommandHandler("delete",  delete_cmd))
     app.add_handler(CommandHandler("settings",    settings.settings_cmd))
+    app.add_handler(CommandHandler("stats",      stats_cmd))
+    app.add_handler(CommandHandler("broadcast",  broadcast_cmd))
+    app.add_handler(CallbackQueryHandler(stats_callback, pattern="^stats:"))
     app.add_handler(CommandHandler("setfsub",     setfsub_cmd))
     app.add_handler(CommandHandler("removefsub",  removefsub_cmd))
     app.add_handler(CommandHandler("setfsubmode", setfsubmode_cmd))

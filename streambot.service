@@ -1,0 +1,17 @@
+[Unit]
+Description=StreamBot - Telegram File to Link & Stream Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/Streambot
+EnvironmentFile=/root/Streambot/.env
+ExecStart=/root/Streambot/venv/bin/python3 run.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/streambot.log
+StandardError=append:/var/log/streambot.log
+
+[Install]
+WantedBy=multi-user.target

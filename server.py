@@ -1,5 +1,6 @@
 import unicodedata
 import re
+from urllib.parse import quote
 """
 FastAPI Streaming Server — 4GB+ Support via Telethon MTProto
 =============================================================
@@ -111,17 +112,33 @@ async def index():
 
 
 def safe_filename(name):
+    # Convert Unicode box/enclosed letters to ASCII equivalents
+    box_map = {
+        "🄰":"A","🄱":"B","🄲":"C","🄳":"D","🄴":"E","🄵":"F","🄶":"G",
+        "🄷":"H","🄸":"I","🄹":"J","🄺":"K","🄻":"L","🄼":"M","🄽":"N",
+        "🄾":"O","🄿":"P","🅀":"Q","🅁":"R","🅂":"S","🅃":"T","🅄":"U",
+        "🅅":"V","🅆":"W","🅇":"X","🅈":"Y","🅉":"Z",
+        "🅐":"A","🅑":"B","🅒":"C","🅓":"D","🅔":"E","🅕":"F","🅖":"G",
+        "🅗":"H","🅘":"I","🅙":"J","🅚":"K","🅛":"L","🅜":"M","🅝":"N",
+        "🅞":"O","🅟":"P","🅠":"Q","🅡":"R","🅢":"S","🅣":"T","🅤":"U",
+        "🅥":"V","🅦":"W","🅧":"X","🅨":"Y","🅩":"Z",
+    }
+    for k, v in box_map.items():
+        name = name.replace(k, v)
     name = unicodedata.normalize("NFKD", name)
     name = name.encode("ascii", "ignore").decode("ascii")
     name = re.sub(r"[^\w\s\-\.]", "", name).strip()
     return name or "video"
 @app.get("/stream/{token}")
-async def stream(token: str, request: Request):
+async def stream(token: str, request: Request, hash: str = ""):
     db = load_db()
-    if token not in db:
-        raise HTTPException(404, "File not found")
+    full_token = f"{token}_{hash}" if hash else token
+    if full_token not in db:
+        if token not in db:
+            raise HTTPException(404, "File not found")
+        full_token = token
 
-    meta       = db[token]
+    meta       = db[full_token]
     total_size = meta["file_size"]
     mime       = meta["mime_type"]
     chat_id    = meta["chat_id"]
@@ -162,12 +179,15 @@ async def stream(token: str, request: Request):
 
 
 @app.get("/download/{token}")
-async def download(token: str):
+async def download(token: str, hash: str = ""):
     db = load_db()
-    if token not in db:
-        raise HTTPException(404, "File not found")
+    full_token = f"{token}_{hash}" if hash else token
+    if full_token not in db:
+        if token not in db:
+            raise HTTPException(404, "File not found")
+        full_token = token
 
-    meta       = db[token]
+    meta       = db[full_token]
     total_size = meta["file_size"]
     chat_id    = meta["chat_id"]
     message_id = meta["message_id"]
@@ -176,20 +196,23 @@ async def download(token: str):
         tg_stream(chat_id, message_id),
         media_type="application/octet-stream",
         headers={
-            "Content-Disposition": f'attachment; filename="{safe_filename(meta["file_name"])}"',
+            "Content-Disposition": f"attachment; filename=\"{safe_filename(meta['file_name'])}\"; filename*=UTF-8''" + quote(meta['file_name'], safe=''),
             "Content-Length":      str(total_size),
         },
     )
 
 
 @app.get("/watch/{token}", response_class=HTMLResponse)
-async def watch_page(token: str):
+async def watch_page(token: str, hash: str = ""):
     db = load_db()
-    if token not in db:
-        raise HTTPException(404, "File not found")
+    full_token = f"{token}_{hash}" if hash else token
+    if full_token not in db:
+        if token not in db:
+            raise HTTPException(404, "File not found")
+        full_token = token
 
-    meta = db[token]
-    db[token]["views"] += 1
+    meta = db[full_token]
+    db[full_token]["views"] += 1
     save_db(db)
 
     name      = meta["file_name"]
@@ -200,8 +223,8 @@ async def watch_page(token: str):
     is_audio  = mime.startswith("audio")
 
     # ✅ Use full absolute URLs so VLC/MX Player can reach the stream
-    stream_url = f"{BASE_URL}/stream/{token}"
-    dl_url     = f"{BASE_URL}/download/{token}"
+    stream_url = f"{BASE_URL}/stream/{token}?hash={hash}"
+    dl_url     = f"{BASE_URL}/download/{token}?hash={hash}"
     vlc_url    = stream_url   # VLC button just opens the direct stream URL
     mx_url     = stream_url   # MX Player button opens the direct stream URL
 
@@ -215,6 +238,7 @@ async def watch_page(token: str):
     size_badge = ""
     if meta["file_size"] > 2 * 1024**3:
         size_badge = '<span class="badge-4g">4GB+ ✅</span>'
+    theme_css = _themes.get_css_vars(os.getenv("THEME", "dark_gold"))
 
     return HTMLResponse(f"""<!DOCTYPE html>
 <html lang="en">

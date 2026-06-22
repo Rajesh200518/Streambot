@@ -1,1 +1,25 @@
+# Environment & secrets
 .env
+*.session
+bot_session.session
+
+# Python
+__pycache__/
+*.pyc
+venv/
+
+# Backup files
+*.bak
+*.bak2
+*.bak3
+*.bak4
+
+# Logs
+*.log
+uvicorn.log
+
+# Database (local only)
+files_db.json
+
+# Cloudflare installer
+cloudflared-linux-amd64.deb

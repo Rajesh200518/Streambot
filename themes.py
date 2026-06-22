@@ -37,6 +37,28 @@ THEMES = {
         "--muted":   "#64748b",
         "--green":   "#16a34a",
     },
+    "dark_red": {
+        "--bg":      "#1a1a1a",
+        "--surface": "#242424",
+        "--card":    "#2d2d2d",
+        "--border":  "#4a1a1a",
+        "--accent":  "#ef4444",
+        "--accent2": "#f97316",
+        "--text":    "#f5f5f5",
+        "--muted":   "#9ca3af",
+        "--green":   "#22c55e",
+    },
+    "electric_purple": {
+        "--bg":      "#1a0a2e",
+        "--surface": "#2d1b4e",
+        "--card":    "#3d2060",
+        "--border":  "#6b21a8",
+        "--accent":  "#a855f7",
+        "--accent2": "#c026d3",
+        "--text":    "#f3e8ff",
+        "--muted":   "#a78bfa",
+        "--green":   "#22c55e",
+    },
 }
 
 def get_css_vars(theme_name: str = "dark_gold") -> str:

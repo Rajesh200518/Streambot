@@ -1,3 +1,14 @@
+
+async def _safe_edit(q, text, **kwargs):
+    """Edit message caption if photo message, else edit text."""
+    try:
+        await q.edit_message_caption(caption=text, **kwargs)
+    except Exception:
+        try:
+            await _safe_edit(q, text, **kwargs)
+        except Exception:
+            pass
+
 """
 /settings — User (PM) + Channel Settings, MongoDB-backed.
 Supports: caption template (HTML bold), shortener toggle, buttons toggle, upload mode.
@@ -88,7 +99,7 @@ async def _show_pm_settings(q):
         [InlineKeyboardButton("🛠 Reset All",           callback_data="set:pm:reset")],
         [InlineKeyboardButton("◀️ Back",               callback_data="set:back")],
     ])
-    await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+    await _safe_edit(q, text, parse_mode="HTML", reply_markup=kb)
 
 async def _show_pm_caption_menu(q):
     u        = await db.get_user(q.from_user.id)
@@ -100,7 +111,7 @@ async def _show_pm_caption_menu(q):
         [InlineKeyboardButton("🗑 Remove Caption", callback_data="set:pm:rmcaption")],
         [InlineKeyboardButton("◀️ Back",           callback_data="set:pm")],
     ])
-    await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+    await _safe_edit(q, text, parse_mode="HTML", reply_markup=kb)
 
 async def _show_pm_short_menu(q):
     u        = await db.get_user(q.from_user.id)
@@ -122,7 +133,7 @@ async def _show_pm_short_menu(q):
     if short_on:
         rows.append([InlineKeyboardButton("🗑 Remove Shortener", callback_data="set:pm:rmshort")])
     rows.append([InlineKeyboardButton("◀️ Back", callback_data="set:pm")])
-    await q.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(rows))
+    await _safe_edit(q, text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(rows))
 
 # ── Channel List ──────────────────────────────────────────────────────────────
 
@@ -139,7 +150,7 @@ async def _show_channels_list(q):
         if chans else
         "📣 <b>My Channels</b>\n\nNo channels added yet."
     )
-    await q.edit_message_text(text, parse_mode="HTML",
+    await _safe_edit(q, text, parse_mode="HTML",
                                reply_markup=InlineKeyboardMarkup(rows))
 
 # ── Channel Detail ────────────────────────────────────────────────────────────
@@ -147,7 +158,7 @@ async def _show_channels_list(q):
 async def _show_channel_details(q, chat_id: int):
     c = await db.get_channel(chat_id)
     if not c:
-        await q.edit_message_text("❌ Channel not found.")
+        await _safe_edit(q, "❌ Channel not found.")
         return
 
     short_on   = bool(c.get("shortener_url"))
@@ -180,7 +191,7 @@ async def _show_channel_details(q, chat_id: int):
          InlineKeyboardButton("⚙️ Reset All",         callback_data=f"set:ch:reset:{chat_id}")],
         [InlineKeyboardButton("◀️ Back",              callback_data="set:channels")],
     ])
-    await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+    await _safe_edit(q, text, parse_mode="HTML", reply_markup=kb)
 
 async def _show_caption_menu(q, chat_id: int):
     c        = await db.get_channel(chat_id)
@@ -192,7 +203,7 @@ async def _show_caption_menu(q, chat_id: int):
         [InlineKeyboardButton("🗑 Remove Caption", callback_data=f"set:ch:rmcaption:{chat_id}")],
         [InlineKeyboardButton("◀️ Back",           callback_data=f"set:ch:view:{chat_id}")],
     ])
-    await q.edit_message_text(text, parse_mode="HTML", reply_markup=kb)
+    await _safe_edit(q, text, parse_mode="HTML", reply_markup=kb)
 
 async def _show_short_menu(q, chat_id: int):
     c        = await db.get_channel(chat_id)
@@ -214,7 +225,7 @@ async def _show_short_menu(q, chat_id: int):
     if short_on:
         rows.append([InlineKeyboardButton("🗑 Remove Shortener", callback_data=f"set:ch:rmshort:{chat_id}")])
     rows.append([InlineKeyboardButton("◀️ Back", callback_data=f"set:ch:view:{chat_id}")])
-    await q.edit_message_text(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(rows))
+    await _safe_edit(q, text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(rows))
 
 # ── Callback Router ───────────────────────────────────────────────────────────
 
@@ -225,7 +236,7 @@ async def settings_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     # ── Main ──
     if data == "set:back":
-        await q.edit_message_text("⚙️ <b>SETTINGS</b>",
+        await _safe_edit(q, "⚙️ <b>SETTINGS</b>",
                                    parse_mode="HTML", reply_markup=_main_menu_kb())
     elif data == "set:pm":
         await _show_pm_settings(q)
@@ -238,7 +249,7 @@ async def settings_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "set:pm:caption":
         pending[uid] = "pm_caption"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Cancel", callback_data="set:pm:captionmenu")]])
-        await q.edit_message_text(
+        await _safe_edit(q, 
             "📝 Send your caption template.\nHTML bold: <code>&lt;b&gt;text&lt;/b&gt;</code>",
             parse_mode="HTML", reply_markup=kb)
     elif data == "set:pm:rmcaption":
@@ -251,7 +262,7 @@ async def settings_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "set:pm:shortener":
         pending[uid] = "pm_short_url"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Cancel", callback_data="set:pm:shortmenu")]])
-        await q.edit_message_text("🌐 Send your shortener domain (e.g. <code>gyanilinks.com</code>).",
+        await _safe_edit(q, "🌐 Send your shortener domain (e.g. <code>gyanilinks.com</code>).",
                                    parse_mode="HTML", reply_markup=kb)
     elif data == "set:pm:rmshort":
         await db.set_user_field(uid, "shortener_url", "")
@@ -278,7 +289,7 @@ async def settings_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _show_pm_settings(q)
     elif data == "set:pm:reset":
         await db.reset_user(uid)
-        await q.edit_message_text("✅ Settings reset.",
+        await _safe_edit(q, "✅ Settings reset.",
                                    reply_markup=InlineKeyboardMarkup([
                                        [InlineKeyboardButton("◀️ Back", callback_data="set:pm")]]))
 
@@ -286,7 +297,7 @@ async def settings_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "set:ch:add":
         pending[uid] = "ch_add"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Cancel", callback_data="set:channels")]])
-        await q.edit_message_text(
+        await _safe_edit(q, 
             "➕ <b>Add Channel</b>\n\nForward any message from your channel "
             "(make sure I'm admin there).",
             parse_mode="HTML", reply_markup=kb)
@@ -303,7 +314,7 @@ async def settings_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         pending[uid] = f"ch_caption:{chat_id}"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Cancel",
                                     callback_data=f"set:ch:captionmenu:{chat_id}")]])
-        await q.edit_message_text(
+        await _safe_edit(q, 
             "📝 Send your caption template.\nHTML bold: <code>&lt;b&gt;text&lt;/b&gt;</code>",
             parse_mode="HTML", reply_markup=kb)
     elif data.startswith("set:ch:rmcaption:"):
@@ -319,7 +330,7 @@ async def settings_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         pending[uid] = f"ch_short_url:{chat_id}"
         kb = InlineKeyboardMarkup([[InlineKeyboardButton("◀️ Cancel",
                                     callback_data=f"set:ch:shortmenu:{chat_id}")]])
-        await q.edit_message_text("🌐 Send shortener domain for this channel.", reply_markup=kb)
+        await _safe_edit(q, "🌐 Send shortener domain for this channel.", reply_markup=kb)
     elif data.startswith("set:ch:rmshort:"):
         chat_id = int(data.split(":")[3])
         await db.set_channel_field(chat_id, "shortener_url", "")
